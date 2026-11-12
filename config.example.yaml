@@ -7,3 +7,6 @@ home: "Anytown, ST 00000"
 
 # Used when a lane doesn't set its own radius.
 default_radius_mi: 25
+
+# Where the trawler keeps its memory. Relative paths are relative to the repo root.
+# db_path: data/trawler.db

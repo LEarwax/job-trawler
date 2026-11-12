@@ -1,11 +1,38 @@
 """Command line. Development tool only; day-to-day use will be the Notion board."""
 
+import json
+
 import typer
 from rich.console import Console
 from rich.table import Table
 
 app = typer.Typer(help="Job trawler", no_args_is_help=True)
 console = Console()
+
+
+def _load(lane_name: str):
+    from job_trawler.config import load_lanes, load_local_config
+
+    cfg = load_local_config()
+    all_lanes = load_lanes()
+    if lane_name not in all_lanes:
+        console.print(f"[red]No lane {lane_name!r}. Known: {', '.join(all_lanes)}[/red]")
+        raise typer.Exit(1)
+    return cfg, all_lanes[lane_name]
+
+
+def _print_postings(title: str, postings) -> None:
+    table = Table(title=title)
+    for col in ("Posted", "Title", "Company", "Location", "Pay", "Source"):
+        table.add_column(col)
+    for p in postings:
+        table.add_row(str(p.posted_on or "?"), p.title, p.company or "", p.location or "",
+                      p.pay or "", p.source)
+    console.print(table)
+    if postings:
+        console.print("\nLinks:")
+        for i, p in enumerate(postings[:10], 1):
+            console.print(f"  {i}. {p.url}")
 
 
 @app.command()
@@ -21,35 +48,55 @@ def lanes() -> None:
 
 
 @app.command()
-def run(lane: str = typer.Option(..., "--lane", "-l", help="Lane name, e.g. bridge-hospitality")) -> None:
-    """Fetch one lane and print the results. Nothing is saved yet (slice 1)."""
-    from job_trawler.config import load_lanes, load_local_config
+def run(
+    lane: str = typer.Option(..., "--lane", "-l", help="Lane name, e.g. bridge-hospitality"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Fetch and print, save nothing"),
+) -> None:
+    """Fetch one lane, remember what was found, and show only postings never seen before."""
+    from datetime import date
+
     from job_trawler.pipeline import run_lane
+    from job_trawler.service import trawl_lane
     from job_trawler.sources import build_sources
+    from job_trawler import storage
 
-    cfg = load_local_config()
-    all_lanes = load_lanes()
-    if lane not in all_lanes:
-        console.print(f"[red]No lane {lane!r}. Known: {', '.join(all_lanes)}[/red]")
-        raise typer.Exit(1)
-    chosen = all_lanes[lane]
+    cfg, chosen = _load(lane)
+    sources = build_sources(chosen.sources)
 
-    result = run_lane(chosen, cfg, build_sources(chosen.sources))
-
-    table = Table(title=f"{chosen.name}: {len(result.postings)} postings "
-                        f"({result.fetched} fetched before dedup)")
-    for col in ("Posted", "Title", "Company", "Location", "Pay", "Source"):
-        table.add_column(col)
-    for p in result.postings:
-        table.add_row(str(p.posted_on or "?"), p.title, p.company or "", p.location or "",
-                      p.pay or "", p.source)
-    console.print(table)
-    for err in result.errors:
+    if dry_run:
+        result = run_lane(chosen, cfg, sources, today=date.today())
+        _print_postings(f"{chosen.name} (dry run): {len(result.postings)} postings", result.postings)
+        errors = result.errors
+    else:
+        conn = storage.connect(cfg.resolved_db_path())
+        out = trawl_lane(chosen, cfg, sources, conn)
+        r = out.run
+        _print_postings(f"{chosen.name}: {len(out.new)} new", out.new)
+        console.print(f"fetched {r.fetched} -> {r.fetched - r.stale - len(r.postings)} in-run duplicates, "
+                      f"{r.stale} stale -> kept {len(r.postings)} -> "
+                      f"[bold]{len(out.new)} new[/bold], {len(r.postings) - len(out.new)} seen before")
+        errors = r.errors
+    for err in errors:
         console.print(f"[yellow]source error:[/yellow] {err}")
-    if result.postings:
-        console.print("\nLinks:")
-        for i, p in enumerate(result.postings[:10], 1):
-            console.print(f"  {i}. {p.url}")
+
+
+@app.command()
+def runs(limit: int = typer.Option(10, help="How many recent runs to show")) -> None:
+    """Show recent runs: when, how much was found, and any errors."""
+    from job_trawler.config import load_local_config
+    from job_trawler import storage
+
+    conn = storage.connect(load_local_config().resolved_db_path())
+    table = Table(title="Recent runs")
+    for col in ("#", "Lane", "Started (UTC)", "Finished", "Fetched", "Kept", "New", "Errors"):
+        table.add_column(col)
+    for row in storage.recent_runs(conn, limit):
+        n_err = len(json.loads(row["errors"])) if row["errors"] else 0
+        finished = row["finished_at"] or "[red]never[/red]"
+        table.add_row(str(row["id"]), row["lane"], row["started_at"], finished,
+                      str(row["fetched"] or 0), str(row["kept"] or 0), str(row["new"] or 0),
+                      f"[yellow]{n_err}[/yellow]" if n_err else "0")
+    console.print(table)
 
 
 if __name__ == "__main__":

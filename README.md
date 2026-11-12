@@ -10,8 +10,12 @@ puts them on a Notion board. The design is in `docs/SPEC.md`. Progress is tracke
   - `models.py`: DTOs (`SearchRequest`, `Posting`)
   - `config.py`: loads and validates lanes and local config
   - `sources/`: one adapter per source behind the `Source` protocol, plus the registry
-  - `pipeline.py`: the core (no I/O of its own)
+  - `pipeline.py`: the core (no I/O of its own): fetch, in-run dedup, freshness
+  - `fingerprint.py`: the "same job" rule (pure)
+  - `storage.py`: SQLite adapter, the trawler's memory and source of truth
+  - `service.py`: wires core + adapters for one lane run
   - `cli.py`: dev commands
+- `data/trawler.db`: created on first run (gitignored)
 - `tests/`: no network, no keys
 
 ## Setup (once, on the Mac)
@@ -20,5 +24,11 @@ puts them on a Notion board. The design is in `docs/SPEC.md`. Progress is tracke
 
 ## Run
     uv run trawl lanes
-    uv run trawl run --lane bridge-hospitality
+    uv run trawl run --lane bridge-hospitality            # saves; shows only new postings
+    uv run trawl run --lane bridge-hospitality --dry-run  # fetch and print, save nothing
+    uv run trawl runs                                     # recent run history
     uv run pytest
+
+Look inside the database any time:
+
+    sqlite3 data/trawler.db "SELECT title, company, first_seen_at, times_seen FROM postings ORDER BY first_seen_at DESC LIMIT 20"

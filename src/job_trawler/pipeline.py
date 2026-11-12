@@ -1,13 +1,17 @@
 """The core. Knows about Lanes, SearchRequests and Postings, and nothing about
-JobSpy, Notion, SQLite or the Anthropic API. Sources are passed in.
+JobSpy, Notion, SQLite or the Anthropic API. Sources are passed in; "today" is
+passed in too, so nothing here depends on the real clock.
 
-Slice 1 pipeline:  lane -> requests -> fetch (per source) -> dedup within this run -> newest first
+Pipeline:  lane -> requests -> fetch (per source) -> dedup within this run
+           -> drop stale -> newest first
 """
 
+import math
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 
 from job_trawler.config import Lane, LocalConfig
+from job_trawler.fingerprint import fingerprint
 from job_trawler.models import Posting, SearchRequest
 from job_trawler.sources.base import Source
 
@@ -17,7 +21,8 @@ class LaneRun:
     lane: str
     postings: list[Posting] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)   # one bad source must not sink the run
-    fetched: int = 0                                  # before dedup, to see how much dedup removed
+    fetched: int = 0                                  # raw count, before dedup
+    stale: int = 0                                    # dropped as too old
 
 
 def build_requests(lane: Lane, cfg: LocalConfig) -> list[SearchRequest]:
@@ -34,21 +39,32 @@ def build_requests(lane: Lane, cfg: LocalConfig) -> list[SearchRequest]:
 
 
 def dedup(postings: list[Posting]) -> list[Posting]:
-    """Keep the first posting per URL. (Slice 2 adds cross-run memory and fuzzier keys.)"""
+    """Keep the first posting per fingerprint (same company + title + city, or same URL)."""
     seen: set[str] = set()
     out = []
     for p in postings:
-        if p.url not in seen:
-            seen.add(p.url)
+        fp = fingerprint(p)
+        if fp not in seen:
+            seen.add(fp)
             out.append(p)
     return out
+
+
+def is_fresh(p: Posting, max_age_hours: int, today: date) -> bool:
+    """Boards mostly report a date, not a time, so this works in whole days and errs
+    on the side of keeping: 48h allows today and the two days before.
+    Postings with no date are kept; the source's own hours_old filter already applied."""
+    if p.posted_on is None:
+        return True
+    oldest_ok = today - timedelta(days=math.ceil(max_age_hours / 24))
+    return p.posted_on >= oldest_ok
 
 
 def newest_first(postings: list[Posting]) -> list[Posting]:
     return sorted(postings, key=lambda p: p.posted_on or date.min, reverse=True)
 
 
-def run_lane(lane: Lane, cfg: LocalConfig, sources: list[Source]) -> LaneRun:
+def run_lane(lane: Lane, cfg: LocalConfig, sources: list[Source], today: date) -> LaneRun:
     run = LaneRun(lane=lane.name)
     collected: list[Posting] = []
     for source in sources:
@@ -60,5 +76,8 @@ def run_lane(lane: Lane, cfg: LocalConfig, sources: list[Source]) -> LaneRun:
                 continue
             collected.extend(found)
     run.fetched = len(collected)
-    run.postings = newest_first(dedup(collected))
+    unique = dedup(collected)
+    fresh = [p for p in unique if is_fresh(p, lane.max_age_hours, today)]
+    run.stale = len(unique) - len(fresh)
+    run.postings = newest_first(fresh)
     return run
