@@ -1,0 +1,9 @@
+# Copy to config.local.yaml (gitignored) and edit.
+# Anything personal or machine-specific lives here, never in lanes or code.
+
+# Where "home" means. Lanes say `center: home` and get this value.
+# Use whatever the job boards understand best; a zip code is the most reliable.
+home: "Anytown, ST 00000"
+
+# Used when a lane doesn't set its own radius.
+default_radius_mi: 25

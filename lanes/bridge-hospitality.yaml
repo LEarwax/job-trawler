@@ -1,0 +1,19 @@
+name: bridge-hospitality
+intent: >
+  Fast-hiring local hospitality work for income now. Bartending first,
+  then barback or serving. Values pay, tips, schedule and distance.
+enabled: true
+
+queries:
+  - bartender
+  - barback
+  - cocktail server
+
+sources: [jobspy]
+
+geo:
+  center: home        # resolved from config.local.yaml
+  radius_mi: 25
+
+max_age_hours: 48     # older postings are not fetched
+results_per_query: 15

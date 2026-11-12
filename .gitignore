@@ -1,0 +1,13 @@
+# Personal / machine-specific settings (copy config.example.yaml)
+config.local.yaml
+.env
+
+# Generated
+data/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+
+.DS_Store
