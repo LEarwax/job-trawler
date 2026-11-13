@@ -5,8 +5,8 @@
 | 1 | One lane, one source, print to terminal | Done 2026-11-12 (live: 20 fetched, 19 kept) |
 | 2 | SQLite memory + fingerprint dedup + freshness | Done 2026-11-12 (live: run 2 = 0 new) |
 | 2.5 | `exclude_title_words` per lane; bridge radius 15 mi | Built 2026-11-12 |
-| 3 | Notion sync (unscored) to Job Trawler > Job Board | Built 2026-11-12. First live sync pending (needs token). |
-| 4 | launchd schedule + heartbeat | |
+| 3 | Notion sync (unscored) to Job Trawler > Job Board | Done 2026-11-12 (14 rows synced, re-sync = 0) |
+| 4 | Daily launchd run-all + Notion heartbeat | Built 2026-11-12. Install on Mac pending. |
 | 5 | LLM scoring + small eval | |
 | 6 | Second lane with zero code changes | |
 | later | `trawl lane new "<what you want>"`: drafts a lane YAML from a phrase, you review | Nick's idea, 2026-11-12 |
@@ -54,3 +54,15 @@
 - Stops at once on 401/403/404 (token or connection problem); stops after 3 consecutive
   other failures; retries 429/5xx up to 3 times honoring Retry-After; 0.35 s between writes.
 - api.notion.com is not reachable from the Cowork VM, so live syncs happen on the Mac.
+
+## Slice 4 notes
+- Decision (Nick, 2026-11-12): ONE scheduled run per morning, not every 2 hours. Run frequency
+  changes how early you see a job, not how many you get; Nick works in a morning batch.
+  `trawl run-all` by hand still works any time.
+- `trawl schedule --at 06:30` writes ~/Library/LaunchAgents/local.job-trawler.plist (full paths,
+  PATH, log file; no secrets). launchd runs a missed job on wake, but not if the Mac was off.
+- Heartbeat: every run-all creates a row in the Notion "Runs" database
+  (f916a8cb923d4218881d714dd672f02d), even if the run failed. The alarm lives in Notion, not in the
+  trawler: the "Health" formula turns to "Stale" when the newest row is over 26 hours old.
+  A dead process can't report its own death; something outside it has to notice the silence.
+- Logs: data/logs/trawl.log (launchd sends stdout and stderr there).

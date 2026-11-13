@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 app = typer.Typer(help="Job trawler", no_args_is_help=True)
-console = Console()
+console = Console(soft_wrap=True)  # never hard-wrap: printed commands must stay copy-pasteable
 
 
 def _load(lane_name: str):
@@ -84,7 +84,8 @@ def run(
         _sync(cfg, conn)
 
 
-def _sync(cfg, conn, limit: int | None = None) -> None:
+def _sync(cfg, conn, limit: int | None = None) -> tuple[int, list[str]]:
+    """Push unpushed postings. Returns (pushed, errors)."""
     from job_trawler.config import notion_token
     from job_trawler.notion_sync import NotionClient, sync, unpushed
 
@@ -92,17 +93,84 @@ def _sync(cfg, conn, limit: int | None = None) -> None:
     if not cfg.notion_jobs_db or not token:
         missing = "notion_jobs_db in config.local.yaml" if not cfg.notion_jobs_db else "NOTION_TOKEN in .env"
         console.print(f"[dim]Notion sync skipped: no {missing}.[/dim]")
-        return
+        return 0, []
     waiting = len(unpushed(conn, limit))
     if not waiting:
         console.print("Notion: board is up to date.")
-        return
+        return 0, []
     console.print(f"Notion: pushing {waiting} posting(s)...")
     res = sync(conn, NotionClient(token, cfg.notion_jobs_db), limit=limit)
     console.print(f"Notion: [bold]{res.pushed} pushed[/bold], {res.failed} failed"
                   + (" [red](stopped early)[/red]" if res.stopped_early else ""))
     for err in res.errors:
         console.print(f"[yellow]notion error:[/yellow] {err}")
+    return res.pushed, res.errors
+
+
+@app.command(name="run-all")
+def run_all_cmd() -> None:
+    """The scheduled job: every enabled lane, then Notion sync, then a heartbeat row."""
+    from datetime import datetime
+
+    from job_trawler.config import load_lanes, load_local_config, notion_token
+    from job_trawler.heartbeat import build_heartbeat
+    from job_trawler.notion_sync import NotionClient
+    from job_trawler.service import run_all
+    from job_trawler.sources import build_sources
+    from job_trawler import storage
+
+    console.print(f"=== run-all {datetime.now().astimezone():%Y-%m-%d %H:%M %Z} ===")
+    cfg = load_local_config()
+    conn = storage.connect(cfg.resolved_db_path())
+    token = notion_token()
+
+    beat = None
+    if cfg.notion_runs_db and token:
+        runs_client = NotionClient(token, cfg.notion_runs_db)   # guard: allowlist = Runs db only
+        beat = lambda r: runs_client.create_page(build_heartbeat(r, cfg.notion_runs_db))  # noqa: E731
+
+    result = run_all(list(load_lanes().values()), cfg, conn, build_sources,
+                     push=lambda: _sync(cfg, conn), beat=beat, log=console.print)
+    console.print(f"=== {result.result}: {result.new} new, {result.pushed} pushed, "
+                  f"{len(result.errors)} errors ===")
+    for err in result.errors:
+        console.print(f"[yellow]error:[/yellow] {err}")
+    if result.failed:
+        raise typer.Exit(1)
+
+
+@app.command()
+def schedule(
+    at: str = typer.Option("06:30", "--at", help="Daily run time, 24h HH:MM, your local time"),
+) -> None:
+    """Write the launchd file that runs `trawl run-all` every day. Prints the command to turn it on."""
+    import shutil
+
+    from job_trawler.config import ROOT
+    from job_trawler.schedule import LABEL, make_plist, plist_path
+
+    try:
+        hour, minute = (int(x) for x in at.split(":"))
+        content = make_plist(shutil.which("uv") or "uv", ROOT, hour, minute)
+    except ValueError:
+        console.print(f"[red]--at must look like 06:30, got {at!r}[/red]")
+        raise typer.Exit(1)
+    if not shutil.which("uv"):
+        console.print("[red]Can't find uv on PATH; run this from a terminal where `uv` works.[/red]")
+        raise typer.Exit(1)
+
+    (ROOT / "data" / "logs").mkdir(parents=True, exist_ok=True)   # launchd won't create it
+    path = plist_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(content)
+    console.print(f"Wrote {path} (daily at {hour:02d}:{minute:02d}).\n")
+    console.print("Turn it on (also use this after changing the time):")
+    console.print(f"  launchctl bootout gui/$(id -u)/{LABEL} 2>/dev/null; "
+                  f"launchctl bootstrap gui/$(id -u) {path}")
+    console.print("Run it once right now, as launchd would:")
+    console.print(f"  launchctl kickstart gui/$(id -u)/{LABEL}")
+    console.print("Turn it off:")
+    console.print(f"  launchctl bootout gui/$(id -u)/{LABEL}")
 
 
 @app.command(name="sync")

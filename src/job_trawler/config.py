@@ -21,6 +21,7 @@ class LocalConfig(BaseModel):
     default_radius_mi: int = Field(default=25, gt=0)
     db_path: Path = Path("data/trawler.db")   # relative paths are relative to the repo root
     notion_jobs_db: str | None = None         # Job Board database id; token lives in .env
+    notion_runs_db: str | None = None         # Runs (heartbeat) database id
 
     def resolved_db_path(self) -> Path:
         return self.db_path if self.db_path.is_absolute() else ROOT / self.db_path
