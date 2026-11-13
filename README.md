@@ -13,6 +13,7 @@ puts them on a Notion board. The design is in `docs/SPEC.md`. Progress is tracke
   - `pipeline.py`: the core (no I/O of its own): fetch, in-run dedup, freshness
   - `fingerprint.py`: the "same job" rule (pure)
   - `storage.py`: SQLite adapter, the trawler's memory and source of truth
+  - `notion_sync.py`, `notion_guard.py`: one-way push to the Notion Job Board, behind a write guard
   - `service.py`: wires core + adapters for one lane run
   - `cli.py`: dev commands
 - `data/trawler.db`: created on first run (gitignored)
@@ -27,6 +28,10 @@ puts them on a Notion board. The design is in `docs/SPEC.md`. Progress is tracke
     uv run trawl run --lane bridge-hospitality            # saves; shows only new postings
     uv run trawl run --lane bridge-hospitality --dry-run  # fetch and print, save nothing
     uv run trawl runs                                     # recent run history
+    uv run trawl sync [--limit 3]                         # push anything not yet on the Notion board
+
+`run` also syncs at the end unless you pass `--no-sync`. Notion needs `notion_jobs_db` in
+`config.local.yaml` and `NOTION_TOKEN=...` in `.env` (gitignored); without them, sync is skipped.
     uv run pytest
 
 Look inside the database any time:

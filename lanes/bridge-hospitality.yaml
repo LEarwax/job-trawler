@@ -9,11 +9,19 @@ queries:
   - barback
   - cocktail server
 
+# Whole words in the title. Any match drops the posting before it's saved.
+exclude_title_words:
+  - manager
+  - director
+  - supervisor
+  - chef
+  - cook
+
 sources: [jobspy]
 
 geo:
   center: home        # resolved from config.local.yaml
-  radius_mi: 25
+  radius_mi: 15
 
 max_age_hours: 48     # older postings are not fetched
 results_per_query: 15

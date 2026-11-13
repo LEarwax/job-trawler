@@ -20,6 +20,7 @@ class LocalConfig(BaseModel):
     home: str
     default_radius_mi: int = Field(default=25, gt=0)
     db_path: Path = Path("data/trawler.db")   # relative paths are relative to the repo root
+    notion_jobs_db: str | None = None         # Job Board database id; token lives in .env
 
     def resolved_db_path(self) -> Path:
         return self.db_path if self.db_path.is_absolute() else ROOT / self.db_path
@@ -39,6 +40,7 @@ class Lane(BaseModel):
     intent: str
     enabled: bool = True
     queries: list[str] = Field(min_length=1)
+    exclude_title_words: list[str] = []   # whole words/phrases; a match drops the posting
     sources: list[str] = Field(min_length=1)
     geo: Geo = Geo()
     max_age_hours: int = Field(default=48, gt=0)
@@ -64,6 +66,20 @@ def load_local_config(path: Path = LOCAL_CONFIG_PATH) -> LocalConfig:
             f"{path.name} not found. Copy config.example.yaml to config.local.yaml and edit it."
         )
     return LocalConfig.model_validate(_read_yaml(path))
+
+
+def notion_token(env_path: Path = ROOT / ".env") -> str | None:
+    """NOTION_TOKEN from the environment, else from the gitignored .env file. Never logged."""
+    import os
+
+    if os.environ.get("NOTION_TOKEN"):
+        return os.environ["NOTION_TOKEN"]
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == "NOTION_TOKEN" and value.strip():
+                return value.strip().strip('"').strip("'")
+    return None
 
 
 def load_lanes(lanes_dir: Path = LANES_DIR) -> dict[str, Lane]:

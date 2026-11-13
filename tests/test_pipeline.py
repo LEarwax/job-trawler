@@ -67,3 +67,25 @@ def test_stale_postings_are_counted_and_dropped():
     src = FakeSource({"bartender": [post("old", 1), post("new", 12)]})
     run = run_lane(LANE, CFG, [src], today=TODAY)
     assert [p.url for p in run.postings] == ["new"] and run.stale == 1
+
+
+def titled(title):
+    return Posting(source="f", url=title, title=title, posted_on=TODAY)
+
+
+def test_exclude_is_whole_word_and_case_insensitive():
+    from job_trawler.pipeline import is_excluded
+    words = ["manager", "line cook"]
+    assert is_excluded(titled("F&B Manager"), words)
+    assert is_excluded(titled("Assistant MANAGER - Restaurant"), words)
+    assert is_excluded(titled("Line Cook (AM)"), words)
+    assert not is_excluded(titled("Bartender"), words)
+    assert not is_excluded(titled("Cook-Off Host"), ["line cook"])
+    assert not is_excluded(titled("Barback"), ["bar"])
+
+
+def test_excluded_postings_are_counted_and_dropped():
+    lane = LANE.model_copy(update={"exclude_title_words": ["manager"]})
+    src = FakeSource({"bartender": [titled("Bartender"), titled("General Manager")]})
+    run = run_lane(lane, CFG, [src], today=TODAY)
+    assert [p.title for p in run.postings] == ["Bartender"] and run.excluded == 1

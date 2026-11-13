@@ -51,6 +51,7 @@ def lanes() -> None:
 def run(
     lane: str = typer.Option(..., "--lane", "-l", help="Lane name, e.g. bridge-hospitality"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Fetch and print, save nothing"),
+    no_sync: bool = typer.Option(False, "--no-sync", help="Save, but don't push to Notion"),
 ) -> None:
     """Fetch one lane, remember what was found, and show only postings never seen before."""
     from datetime import date
@@ -72,12 +73,46 @@ def run(
         out = trawl_lane(chosen, cfg, sources, conn)
         r = out.run
         _print_postings(f"{chosen.name}: {len(out.new)} new", out.new)
-        console.print(f"fetched {r.fetched} -> {r.fetched - r.stale - len(r.postings)} in-run duplicates, "
-                      f"{r.stale} stale -> kept {len(r.postings)} -> "
+        dupes = r.fetched - r.stale - r.excluded - len(r.postings)
+        console.print(f"fetched {r.fetched} -> {dupes} in-run duplicates, {r.stale} stale, "
+                      f"{r.excluded} excluded -> kept {len(r.postings)} -> "
                       f"[bold]{len(out.new)} new[/bold], {len(r.postings) - len(out.new)} seen before")
         errors = r.errors
     for err in errors:
         console.print(f"[yellow]source error:[/yellow] {err}")
+    if not dry_run and not no_sync:
+        _sync(cfg, conn)
+
+
+def _sync(cfg, conn, limit: int | None = None) -> None:
+    from job_trawler.config import notion_token
+    from job_trawler.notion_sync import NotionClient, sync, unpushed
+
+    token = notion_token()
+    if not cfg.notion_jobs_db or not token:
+        missing = "notion_jobs_db in config.local.yaml" if not cfg.notion_jobs_db else "NOTION_TOKEN in .env"
+        console.print(f"[dim]Notion sync skipped: no {missing}.[/dim]")
+        return
+    waiting = len(unpushed(conn, limit))
+    if not waiting:
+        console.print("Notion: board is up to date.")
+        return
+    console.print(f"Notion: pushing {waiting} posting(s)...")
+    res = sync(conn, NotionClient(token, cfg.notion_jobs_db), limit=limit)
+    console.print(f"Notion: [bold]{res.pushed} pushed[/bold], {res.failed} failed"
+                  + (" [red](stopped early)[/red]" if res.stopped_early else ""))
+    for err in res.errors:
+        console.print(f"[yellow]notion error:[/yellow] {err}")
+
+
+@app.command(name="sync")
+def sync_cmd(limit: int = typer.Option(None, help="Push at most this many (handy for a first test)")) -> None:
+    """Push any postings not yet on the Notion board."""
+    from job_trawler.config import load_local_config
+    from job_trawler import storage
+
+    cfg = load_local_config()
+    _sync(cfg, storage.connect(cfg.resolved_db_path()), limit)
 
 
 @app.command()

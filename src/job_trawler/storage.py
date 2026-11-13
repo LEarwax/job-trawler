@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS postings (
     description   TEXT    NOT NULL DEFAULT '',
     first_seen_at TEXT    NOT NULL,          -- UTC ISO time we first saw it (hour precision)
     last_seen_at  TEXT    NOT NULL,          -- bumps on every re-sighting / re-post
-    times_seen    INTEGER NOT NULL DEFAULT 1
+    times_seen    INTEGER NOT NULL DEFAULT 1,
+    notion_page_id TEXT                      -- NULL = not yet on the board (slice 3)
 );
 
 CREATE TABLE IF NOT EXISTS runs (
@@ -51,7 +52,17 @@ def connect(path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring databases created by older slices up to date. Each step is safe to re-run.
+    (CREATE TABLE IF NOT EXISTS never adds columns to a table that already exists.)"""
+    columns = {r["name"] for r in conn.execute("PRAGMA table_info(postings)")}
+    with conn:
+        if "notion_page_id" not in columns:                                    # slice 3
+            conn.execute("ALTER TABLE postings ADD COLUMN notion_page_id TEXT")
 
 
 def _iso(t: datetime) -> str:

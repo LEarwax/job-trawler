@@ -10,3 +10,7 @@ default_radius_mi: 25
 
 # Where the trawler keeps its memory. Relative paths are relative to the repo root.
 # db_path: data/trawler.db
+
+# Notion Job Board database id (from its URL). The token is NOT here: put
+# NOTION_TOKEN=... in .env (gitignored). Leave unset to run without Notion.
+# notion_jobs_db: "0123456789abcdef0123456789abcdef"
